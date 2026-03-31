@@ -1,0 +1,24 @@
+{
+  "name": "timeboxing-api",
+  "version": "1.0.0",
+  "description": "Node 기반 Open API 서버 스캐폴딩(프론트 연동용).",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "connect-pg-simple": "^10.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "pg": "^8.20.0",
+    "zod": "^4.3.6"
+  }
+}
