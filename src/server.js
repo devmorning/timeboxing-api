@@ -164,4 +164,7 @@ function createServer() {
   return app;
 }
 
-module.exports = { createServer };
+const app = createServer();
+
+module.exports = app;
+module.exports.createServer = createServer;
