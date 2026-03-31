@@ -3,8 +3,19 @@ const connectPgSimple = require("connect-pg-simple");
 const { getPool } = require("../storage/pool");
 const { hasPostgresConfig } = require("../lib/pgConfig");
 
-function createSessionMiddleware() {
+function getSessionCookieOptions() {
   const isProd = process.env.NODE_ENV === "production";
+  const crossSiteCookie = process.env.SESSION_COOKIE_SAMESITE === "none" || isProd;
+
+  return {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: crossSiteCookie ? "none" : "lax",
+    maxAge: 1000 * 60 * 60 * 24 * 30,
+  };
+}
+
+function createSessionMiddleware() {
   const PgStore = connectPgSimple(session);
   let store;
 
@@ -26,14 +37,9 @@ function createSessionMiddleware() {
     resave: false,
     saveUninitialized: false,
     proxy: true,
-    cookie: {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: "lax",
-      maxAge: 1000 * 60 * 60 * 24 * 30,
-    },
+    cookie: getSessionCookieOptions(),
     store,
   });
 }
 
-module.exports = { createSessionMiddleware };
+module.exports = { createSessionMiddleware, getSessionCookieOptions };

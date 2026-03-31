@@ -1,5 +1,6 @@
 const express = require("express");
 const passport = require("passport");
+const { getSessionCookieOptions } = require("../auth/session");
 
 const router = express.Router();
 
@@ -36,7 +37,7 @@ router.post("/logout", (req, res, next) => {
     if (error) return next(error);
     req.session.destroy((sessionError) => {
       if (sessionError) return next(sessionError);
-      res.clearCookie("connect.sid");
+      res.clearCookie("connect.sid", getSessionCookieOptions());
       res.json({ ok: true });
     });
   });
