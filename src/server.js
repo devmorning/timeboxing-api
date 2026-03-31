@@ -16,26 +16,44 @@ async function pingPostgresOnce() {
   return { ok: true, row: r.rows[0] };
 }
 
+function buildAllowedOrigins() {
+  const values = [
+    process.env.FRONTEND_URL,
+    process.env.CORS_ORIGIN,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://timeboxplanner.vercel.app",
+  ]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(","))
+    .map((value) => value.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+
+  return [...new Set(values)];
+}
+
 function createCorsOptions() {
-  const corsOrigin = process.env.CORS_ORIGIN;
-  const allowedOrigins = corsOrigin
-    ? corsOrigin.split(",").map((s) => s.trim()).filter(Boolean)
-    : [];
+  const allowedOrigins = buildAllowedOrigins();
 
   return {
     origin(origin, callback) {
       if (!origin) return callback(null, true);
-      if (allowedOrigins.length === 0 || allowedOrigins.includes("*")) {
-        return callback(null, origin);
+      const normalizedOrigin = origin.replace(/\/+$/, "");
+
+      if (allowedOrigins.includes(normalizedOrigin)) {
+        return callback(null, normalizedOrigin);
       }
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, origin);
-      }
-      return callback(new Error(`CORS blocked for origin: ${origin}`));
+
+      // eslint-disable-next-line no-console
+      console.error("[cors] blocked origin", {
+        origin: normalizedOrigin,
+        allowedOrigins,
+      });
+      return callback(new Error(`CORS blocked for origin: ${normalizedOrigin}`));
     },
     credentials: true,
-    methods: ["GET", "PUT", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    methods: ["GET", "PUT", "POST", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
     optionsSuccessStatus: 204,
   };
 }
