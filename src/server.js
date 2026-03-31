@@ -55,6 +55,76 @@ function createServer() {
   app.use(passport.initialize());
   app.use(passport.session());
 
+  app.get("/", (_req, res) => {
+    res
+      .status(200)
+      .type("html")
+      .send(`<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>timeboxing-api</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f8fafc;
+        color: #0f172a;
+      }
+      main {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      section {
+        width: 100%;
+        max-width: 560px;
+        background: #ffffff;
+        border-radius: 20px;
+        padding: 28px;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 24px;
+      }
+      p {
+        margin: 0 0 10px;
+        line-height: 1.6;
+        color: #475569;
+      }
+      code {
+        background: #f1f5f9;
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+      ul {
+        margin: 16px 0 0;
+        padding-left: 18px;
+        color: #334155;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <h1>timeboxing-api</h1>
+        <p>Timeboxing 프론트엔드가 사용하는 Node 기반 API 서버입니다.</p>
+        <p>상태 확인은 <code>/healthz</code>, DB 연결 확인은 <code>/healthz/db</code> 에서 할 수 있습니다.</p>
+        <ul>
+          <li><code>/auth/google</code>: Google 로그인 시작</li>
+          <li><code>/auth/me</code>: 현재 로그인 사용자 확인</li>
+          <li><code>/api/day-plans/:dateYmd</code>: 날짜별 계획 조회/저장</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>`);
+  });
+
   app.get("/healthz", (_req, res) => res.status(200).json({ ok: true }));
 
   app.get("/healthz/db", async (_req, res) => {
