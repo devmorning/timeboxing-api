@@ -1,6 +1,12 @@
 const { Pool } = require("pg");
 const { getPoolConfig } = require("../lib/pgConfig");
 
-const pool = new Pool(getPoolConfig());
+let poolInstance = null;
 
-module.exports = { pool };
+function getPool() {
+  if (poolInstance) return poolInstance;
+  poolInstance = new Pool(getPoolConfig());
+  return poolInstance;
+}
+
+module.exports = { getPool };

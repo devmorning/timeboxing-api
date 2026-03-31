@@ -1,6 +1,6 @@
 const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
-const { pool } = require("../storage/pool");
+const { getPool } = require("../storage/pool");
 
 function configurePassport() {
   passport.serializeUser((user, done) => {
@@ -9,6 +9,7 @@ function configurePassport() {
 
   passport.deserializeUser(async (id, done) => {
     try {
+      const pool = getPool();
       const result = await pool.query(
         `SELECT id, email, name, avatar_url AS "avatarUrl" FROM users WHERE id = $1`,
         [id]
@@ -35,6 +36,7 @@ function configurePassport() {
       },
       async (_accessToken, _refreshToken, profile, done) => {
         try {
+          const pool = getPool();
           const googleSub = profile.id;
           const email = profile.emails?.[0]?.value ?? null;
           const name = profile.displayName ?? "Google User";

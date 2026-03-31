@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const passport = require("passport");
-const { pool } = require("./storage/pool");
+const { getPool } = require("./storage/pool");
 const { hasPostgresConfig } = require("./lib/pgConfig");
 const { createSessionMiddleware } = require("./auth/session");
 const { configurePassport } = require("./auth/passport");
@@ -11,6 +11,7 @@ const dayPlansRouter = require("./routes/dayPlans");
 configurePassport();
 
 async function pingPostgresOnce() {
+  const pool = getPool();
   const r = await pool.query("SELECT 1 AS ok");
   return { ok: true, row: r.rows[0] };
 }

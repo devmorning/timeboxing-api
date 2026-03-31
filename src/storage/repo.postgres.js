@@ -1,4 +1,4 @@
-const { pool } = require("./pool");
+const { getPool } = require("./pool");
 
 function createEmptyDayPlan() {
   return {
@@ -11,6 +11,7 @@ function createEmptyDayPlan() {
 function createPostgresDayPlansRepo() {
   return {
     async getByDate(userId, dateYmd) {
+      const pool = getPool();
       const client = await pool.connect();
       try {
         const planRes = await client.query(
@@ -51,6 +52,7 @@ function createPostgresDayPlansRepo() {
     },
 
     async saveByDate(userId, dateYmd, plan) {
+      const pool = getPool();
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -105,6 +107,7 @@ function createPostgresDayPlansRepo() {
     },
 
     async listMarkedDatesInMonth(userId, year, month) {
+      const pool = getPool();
       const mm = String(month).padStart(2, "0");
       const startYmd = `${year}-${mm}-01`;
       const nextMonth = month === 12 ? 1 : month + 1;
@@ -139,6 +142,7 @@ function createPostgresDayPlansRepo() {
     },
 
     async listMarkedDatesInRange(userId, startYmd, endYmd) {
+      const pool = getPool();
       const res = await pool.query(
         `
         SELECT dp.plan_date

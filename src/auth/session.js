@@ -1,11 +1,25 @@
 const session = require("express-session");
 const connectPgSimple = require("connect-pg-simple");
-const { pool } = require("../storage/pool");
+const { getPool } = require("../storage/pool");
 const { hasPostgresConfig } = require("../lib/pgConfig");
 
 function createSessionMiddleware() {
   const isProd = process.env.NODE_ENV === "production";
   const PgStore = connectPgSimple(session);
+  let store;
+
+  if (hasPostgresConfig()) {
+    try {
+      store = new PgStore({
+        pool: getPool(),
+        tableName: "user_sessions",
+        createTableIfMissing: true,
+      });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error("[session] PostgreSQL session store 초기화 실패, 메모리 스토어로 대체합니다.", error);
+    }
+  }
 
   return session({
     secret: process.env.SESSION_SECRET || "timeboxing-dev-session-secret",
@@ -18,13 +32,7 @@ function createSessionMiddleware() {
       sameSite: "lax",
       maxAge: 1000 * 60 * 60 * 24 * 30,
     },
-    store: hasPostgresConfig()
-      ? new PgStore({
-          pool,
-          tableName: "user_sessions",
-          createTableIfMissing: true,
-        })
-      : undefined,
+    store,
   });
 }
 
