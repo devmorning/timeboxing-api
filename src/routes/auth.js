@@ -1,6 +1,6 @@
 const express = require("express");
 const passport = require("passport");
-const { getSessionCookieOptions } = require("../auth/session");
+const { createAccessToken, getBearerToken, verifyAccessToken } = require("../auth/token");
 const { createDayPlansRepo } = require("../storage/repo");
 
 const router = express.Router();
@@ -21,19 +21,38 @@ function logRouteTiming(name, startedAt, meta = {}) {
   });
 }
 
+function getAuthUser(req) {
+  const token = getBearerToken(req);
+  const payload = verifyAccessToken(token);
+  if (!payload?.sub) return null;
+
+  return {
+    id: payload.sub,
+    email: payload.email ?? null,
+    name: payload.name ?? null,
+    avatarUrl: payload.avatarUrl ?? null,
+  };
+}
+
 router.get("/google", passport.authenticate("google", { scope: ["profile", "email"] }));
 
 router.get(
   "/google/callback",
-  passport.authenticate("google", { failureRedirect: `${frontBaseUrl}?login=failed` }),
-  (_req, res) => {
-    res.redirect(frontBaseUrl);
+  passport.authenticate("google", {
+    failureRedirect: `${frontBaseUrl}?login=failed`,
+    session: false,
+  }),
+  (req, res) => {
+    const token = createAccessToken(req.user);
+    res.redirect(`${frontBaseUrl}?token=${encodeURIComponent(token)}`);
   }
 );
 
 router.get("/me", (req, res) => {
   const startedAt = Date.now();
-  if (!req.isAuthenticated?.() || !req.user) {
+  const user = getAuthUser(req);
+
+  if (!user) {
     logRouteTiming("GET /auth/me", startedAt, { authenticated: false, status: 401 });
     return res.status(401).json({ authenticated: false });
   }
@@ -41,19 +60,16 @@ router.get("/me", (req, res) => {
   logRouteTiming("GET /auth/me", startedAt, { authenticated: true, status: 200 });
   res.json({
     authenticated: true,
-    user: {
-      id: req.user.id,
-      email: req.user.email ?? null,
-      name: req.user.name ?? null,
-      avatarUrl: req.user.avatarUrl ?? null,
-    },
+    user,
   });
 });
 
 router.get("/bootstrap", async (req, res, next) => {
   const startedAt = Date.now();
   try {
-    if (!req.isAuthenticated?.() || !req.user?.id) {
+    const user = getAuthUser(req);
+
+    if (!user?.id) {
       logRouteTiming("GET /auth/bootstrap", startedAt, {
         authenticated: false,
         status: 200,
@@ -67,7 +83,7 @@ router.get("/bootstrap", async (req, res, next) => {
     }
 
     const dateYmd = isValidYmd(req.query.dateYmd) ? req.query.dateYmd : null;
-    const plan = dateYmd ? await repo.getByDate(req.user.id, dateYmd) : null;
+    const plan = dateYmd ? await repo.getByDate(user.id, dateYmd) : null;
 
     logRouteTiming("GET /auth/bootstrap", startedAt, {
       authenticated: true,
@@ -76,12 +92,7 @@ router.get("/bootstrap", async (req, res, next) => {
     });
     return res.status(200).json({
       authenticated: true,
-      user: {
-        id: req.user.id,
-        email: req.user.email ?? null,
-        name: req.user.name ?? null,
-        avatarUrl: req.user.avatarUrl ?? null,
-      },
+      user,
       plan,
     });
   } catch (error) {
@@ -89,17 +100,10 @@ router.get("/bootstrap", async (req, res, next) => {
   }
 });
 
-router.post("/logout", (req, res, next) => {
+router.post("/logout", (_req, res) => {
   const startedAt = Date.now();
-  req.logout((error) => {
-    if (error) return next(error);
-    req.session.destroy((sessionError) => {
-      if (sessionError) return next(sessionError);
-      res.clearCookie("connect.sid", getSessionCookieOptions());
-      logRouteTiming("POST /auth/logout", startedAt, { status: 200 });
-      res.json({ ok: true });
-    });
-  });
+  logRouteTiming("POST /auth/logout", startedAt, { status: 200 });
+  res.json({ ok: true });
 });
 
 module.exports = router;
