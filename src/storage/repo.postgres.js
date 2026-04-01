@@ -24,16 +24,36 @@ function createPostgresDayPlansRepo() {
       const totalStartedAt = Date.now();
       const client = await pool.connect();
       try {
-        const planStartedAt = Date.now();
+        const queryStartedAt = Date.now();
         const planRes = await client.query(
           `
-          SELECT id, important1, important2, important3, brain_dump
-          FROM day_plans
-          WHERE user_id = $1 AND plan_date = $2::date
+          SELECT
+            dp.id,
+            dp.important1,
+            dp.important2,
+            dp.important3,
+            dp.brain_dump,
+            COALESCE(
+              json_agg(
+                json_build_object(
+                  'id', i.id,
+                  'time', i.time,
+                  'content', i.content,
+                  'done', i.done
+                )
+                ORDER BY i.time ASC, i.created_at ASC
+              ) FILTER (WHERE i.id IS NOT NULL),
+              '[]'::json
+            ) AS items
+          FROM day_plans dp
+          LEFT JOIN day_plan_items i
+            ON i.day_plan_id = dp.id
+          WHERE dp.user_id = $1 AND dp.plan_date = $2::date
+          GROUP BY dp.id, dp.important1, dp.important2, dp.important3, dp.brain_dump
           `,
           [userId, dateYmd]
         );
-        logRepoTiming("getByDate.planQuery", planStartedAt, { userId, dateYmd });
+        logRepoTiming("getByDate.singleQuery", queryStartedAt, { userId, dateYmd });
 
         const row = planRes.rows[0];
         if (!row) {
@@ -46,31 +66,17 @@ function createPostgresDayPlansRepo() {
           return createEmptyDayPlan();
         }
 
-        const itemsStartedAt = Date.now();
-        const itemsRes = await client.query(
-          `
-          SELECT id, time, content, done
-          FROM day_plan_items
-          WHERE day_plan_id = $1
-          ORDER BY time ASC, created_at ASC
-          `,
-          [row.id]
-        );
-        logRepoTiming("getByDate.itemsQuery", itemsStartedAt, {
-          userId,
-          dateYmd,
-          itemCount: itemsRes.rows.length,
-        });
-
         const result = {
           important3: [row.important1 ?? "", row.important2 ?? "", row.important3 ?? ""],
           brainDump: row.brain_dump ?? "",
-          items: itemsRes.rows.map((it) => ({
-            id: it.id,
-            time: it.time,
-            content: it.content,
-            done: Boolean(it.done),
-          })),
+          items: Array.isArray(row.items)
+            ? row.items.map((it) => ({
+                id: it.id,
+                time: it.time,
+                content: it.content,
+                done: Boolean(it.done),
+              }))
+            : [],
         };
         logRepoTiming("getByDate.total", totalStartedAt, {
           userId,
