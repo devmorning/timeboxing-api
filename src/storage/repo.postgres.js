@@ -8,12 +8,23 @@ function createEmptyDayPlan() {
   };
 }
 
+function logRepoTiming(name, startedAt, meta = {}) {
+  // eslint-disable-next-line no-console
+  console.log("[repo:postgres]", {
+    name,
+    elapsedMs: Date.now() - startedAt,
+    ...meta,
+  });
+}
+
 function createPostgresDayPlansRepo() {
   return {
     async getByDate(userId, dateYmd) {
       const pool = getPool();
+      const totalStartedAt = Date.now();
       const client = await pool.connect();
       try {
+        const planStartedAt = Date.now();
         const planRes = await client.query(
           `
           SELECT id, important1, important2, important3, brain_dump
@@ -22,10 +33,20 @@ function createPostgresDayPlansRepo() {
           `,
           [userId, dateYmd]
         );
+        logRepoTiming("getByDate.planQuery", planStartedAt, { userId, dateYmd });
 
         const row = planRes.rows[0];
-        if (!row) return createEmptyDayPlan();
+        if (!row) {
+          logRepoTiming("getByDate.total", totalStartedAt, {
+            userId,
+            dateYmd,
+            itemCount: 0,
+            empty: true,
+          });
+          return createEmptyDayPlan();
+        }
 
+        const itemsStartedAt = Date.now();
         const itemsRes = await client.query(
           `
           SELECT id, time, content, done
@@ -35,8 +56,13 @@ function createPostgresDayPlansRepo() {
           `,
           [row.id]
         );
+        logRepoTiming("getByDate.itemsQuery", itemsStartedAt, {
+          userId,
+          dateYmd,
+          itemCount: itemsRes.rows.length,
+        });
 
-        return {
+        const result = {
           important3: [row.important1 ?? "", row.important2 ?? "", row.important3 ?? ""],
           brainDump: row.brain_dump ?? "",
           items: itemsRes.rows.map((it) => ({
@@ -46,6 +72,13 @@ function createPostgresDayPlansRepo() {
             done: Boolean(it.done),
           })),
         };
+        logRepoTiming("getByDate.total", totalStartedAt, {
+          userId,
+          dateYmd,
+          itemCount: result.items.length,
+          empty: false,
+        });
+        return result;
       } finally {
         client.release();
       }
@@ -53,15 +86,19 @@ function createPostgresDayPlansRepo() {
 
     async saveByDate(userId, dateYmd, plan) {
       const pool = getPool();
+      const totalStartedAt = Date.now();
       const client = await pool.connect();
       try {
+        const beginStartedAt = Date.now();
         await client.query("BEGIN");
+        logRepoTiming("saveByDate.begin", beginStartedAt, { userId, dateYmd });
 
         const important3 = Array.isArray(plan.important3) ? plan.important3 : ["", "", ""];
         const [i1, i2, i3] = important3.slice(0, 3).map((v) => (typeof v === "string" ? v : ""));
         const brainDump = typeof plan.brainDump === "string" ? plan.brainDump : "";
         const items = Array.isArray(plan.items) ? plan.items : [];
 
+        const upsertStartedAt = Date.now();
         const upsertPlan = await client.query(
           `
           INSERT INTO day_plans(user_id, plan_date, important1, important2, important3, brain_dump, updated_at)
@@ -76,10 +113,15 @@ function createPostgresDayPlansRepo() {
           `,
           [userId, dateYmd, i1, i2, i3, brainDump]
         );
+        logRepoTiming("saveByDate.upsertPlan", upsertStartedAt, { userId, dateYmd });
 
         const dayPlanId = upsertPlan.rows[0].id;
+        const deleteStartedAt = Date.now();
         await client.query("DELETE FROM day_plan_items WHERE day_plan_id = $1", [dayPlanId]);
+        logRepoTiming("saveByDate.deleteItems", deleteStartedAt, { userId, dateYmd });
 
+        const insertStartedAt = Date.now();
+        let insertedCount = 0;
         for (const item of items) {
           if (!item || typeof item !== "object" || typeof item.content !== "string") continue;
           if (item.content.trim().length === 0) continue;
@@ -95,9 +137,22 @@ function createPostgresDayPlansRepo() {
               typeof item.done === "boolean" ? item.done : false,
             ]
           );
+          insertedCount += 1;
         }
+        logRepoTiming("saveByDate.insertItems", insertStartedAt, {
+          userId,
+          dateYmd,
+          insertedCount,
+        });
 
+        const commitStartedAt = Date.now();
         await client.query("COMMIT");
+        logRepoTiming("saveByDate.commit", commitStartedAt, { userId, dateYmd });
+        logRepoTiming("saveByDate.total", totalStartedAt, {
+          userId,
+          dateYmd,
+          itemCount: insertedCount,
+        });
       } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -108,6 +163,7 @@ function createPostgresDayPlansRepo() {
 
     async listMarkedDatesInMonth(userId, year, month) {
       const pool = getPool();
+      const startedAt = Date.now();
       const mm = String(month).padStart(2, "0");
       const startYmd = `${year}-${mm}-01`;
       const nextMonth = month === 12 ? 1 : month + 1;
@@ -138,11 +194,19 @@ function createPostgresDayPlansRepo() {
         [userId, startYmd, endExclusive]
       );
 
-      return res.rows.map((row) => row.plan_date.toISOString().slice(0, 10));
+      const dates = res.rows.map((row) => row.plan_date.toISOString().slice(0, 10));
+      logRepoTiming("listMarkedDatesInMonth", startedAt, {
+        userId,
+        year,
+        month,
+        count: dates.length,
+      });
+      return dates;
     },
 
     async listMarkedDatesInRange(userId, startYmd, endYmd) {
       const pool = getPool();
+      const startedAt = Date.now();
       const res = await pool.query(
         `
         SELECT dp.plan_date
@@ -167,7 +231,14 @@ function createPostgresDayPlansRepo() {
         [userId, startYmd, endYmd]
       );
 
-      return res.rows.map((row) => row.plan_date.toISOString().slice(0, 10));
+      const dates = res.rows.map((row) => row.plan_date.toISOString().slice(0, 10));
+      logRepoTiming("listMarkedDatesInRange", startedAt, {
+        userId,
+        startYmd,
+        endYmd,
+        count: dates.length,
+      });
+      return dates;
     },
   };
 }
