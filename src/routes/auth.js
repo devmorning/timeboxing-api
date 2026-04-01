@@ -12,6 +12,15 @@ function isValidYmd(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
+function logRouteTiming(name, startedAt, meta = {}) {
+  // eslint-disable-next-line no-console
+  console.log("[route:auth]", {
+    name,
+    elapsedMs: Date.now() - startedAt,
+    ...meta,
+  });
+}
+
 router.get("/google", passport.authenticate("google", { scope: ["profile", "email"] }));
 
 router.get(
@@ -23,10 +32,13 @@ router.get(
 );
 
 router.get("/me", (req, res) => {
+  const startedAt = Date.now();
   if (!req.isAuthenticated?.() || !req.user) {
+    logRouteTiming("GET /auth/me", startedAt, { authenticated: false, status: 401 });
     return res.status(401).json({ authenticated: false });
   }
 
+  logRouteTiming("GET /auth/me", startedAt, { authenticated: true, status: 200 });
   res.json({
     authenticated: true,
     user: {
@@ -39,8 +51,14 @@ router.get("/me", (req, res) => {
 });
 
 router.get("/bootstrap", async (req, res, next) => {
+  const startedAt = Date.now();
   try {
     if (!req.isAuthenticated?.() || !req.user?.id) {
+      logRouteTiming("GET /auth/bootstrap", startedAt, {
+        authenticated: false,
+        status: 200,
+        dateYmd: req.query.dateYmd ?? null,
+      });
       return res.status(200).json({
         authenticated: false,
         user: null,
@@ -51,6 +69,11 @@ router.get("/bootstrap", async (req, res, next) => {
     const dateYmd = isValidYmd(req.query.dateYmd) ? req.query.dateYmd : null;
     const plan = dateYmd ? await repo.getByDate(req.user.id, dateYmd) : null;
 
+    logRouteTiming("GET /auth/bootstrap", startedAt, {
+      authenticated: true,
+      status: 200,
+      dateYmd,
+    });
     return res.status(200).json({
       authenticated: true,
       user: {
@@ -67,11 +90,13 @@ router.get("/bootstrap", async (req, res, next) => {
 });
 
 router.post("/logout", (req, res, next) => {
+  const startedAt = Date.now();
   req.logout((error) => {
     if (error) return next(error);
     req.session.destroy((sessionError) => {
       if (sessionError) return next(sessionError);
       res.clearCookie("connect.sid", getSessionCookieOptions());
+      logRouteTiming("POST /auth/logout", startedAt, { status: 200 });
       res.json({ ok: true });
     });
   });
