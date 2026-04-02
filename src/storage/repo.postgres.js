@@ -37,11 +37,13 @@ function createPostgresDayPlansRepo() {
               json_agg(
                 json_build_object(
                   'id', i.id,
-                  'time', i.time,
+                  'startTime', i.start_time,
+                  'endTime', i.end_time,
                   'content', i.content,
-                  'done', i.done
+                  'done', i.done,
+                  'executedSeconds', i.executed_seconds
                 )
-                ORDER BY i.time ASC, i.created_at ASC
+                ORDER BY i.start_time ASC, i.end_time ASC, i.created_at ASC
               ) FILTER (WHERE i.id IS NOT NULL),
               '[]'::json
             ) AS items
@@ -72,9 +74,11 @@ function createPostgresDayPlansRepo() {
           items: Array.isArray(row.items)
             ? row.items.map((it) => ({
                 id: it.id,
-                time: it.time,
+                startTime: it.startTime,
+                endTime: it.endTime ?? "",
                 content: it.content,
                 done: Boolean(it.done),
+                executedSeconds: typeof it.executedSeconds === "number" ? it.executedSeconds : 0,
               }))
             : [],
         };
@@ -133,14 +137,22 @@ function createPostgresDayPlansRepo() {
           if (item.content.trim().length === 0) continue;
           await client.query(
             `
-            INSERT INTO day_plan_items(day_plan_id, time, content, done, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, now(), now())
+            INSERT INTO day_plan_items(day_plan_id, start_time, end_time, content, done, executed_seconds, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, now(), now())
             `,
             [
               dayPlanId,
-              typeof item.time === "string" ? item.time : "09:00",
+              typeof item.startTime === "string"
+                ? item.startTime
+                : typeof item.time === "string"
+                  ? item.time
+                  : "09:00",
+              typeof item.endTime === "string" ? item.endTime : "",
               item.content,
               typeof item.done === "boolean" ? item.done : false,
+              typeof item.executedSeconds === "number"
+                ? Math.max(0, Math.floor(item.executedSeconds))
+                : 0,
             ]
           );
           insertedCount += 1;

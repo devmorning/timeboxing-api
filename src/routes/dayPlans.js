@@ -10,9 +10,16 @@ const YmdSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 const DayPlanItemSchema = z.object({
   id: z.string().optional(),
-  time: z.string().regex(/^\d{2}:\d{2}$/).default("09:00"),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/).default("09:00"),
+  endTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .or(z.literal(""))
+    .optional()
+    .default(""),
   content: z.string().default(""),
   done: z.boolean().optional().default(false),
+  executedSeconds: z.number().int().nonnegative().optional().default(0),
 });
 
 const DayPlanSchema = z.object({

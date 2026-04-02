@@ -7,6 +7,7 @@ const { createSessionMiddleware } = require("./auth/session");
 const { configurePassport } = require("./auth/passport");
 const authRouter = require("./routes/auth");
 const dayPlansRouter = require("./routes/dayPlans");
+const repeatingTemplatesRouter = require("./routes/repeatingTemplates");
 
 configurePassport();
 
@@ -456,6 +457,7 @@ function createServer() {
 
   app.use("/auth", authRouter);
   app.use("/api/day-plans", dayPlansRouter);
+  app.use("/api/repeating-templates", repeatingTemplatesRouter);
 
   app.use((error, _req, res, _next) => {
     // eslint-disable-next-line no-console
