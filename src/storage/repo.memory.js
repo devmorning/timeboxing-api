@@ -34,6 +34,10 @@ function normalizePlan(plan) {
             typeof it.executedSeconds === "number" && Number.isFinite(it.executedSeconds)
               ? Math.max(0, Math.floor(it.executedSeconds))
               : 0,
+          executionStartedAt:
+            typeof it.executionStartedAt === "string" && it.executionStartedAt.length > 0
+              ? it.executionStartedAt
+              : null,
         }))
         .filter((it) => it.content.trim().length > 0)
     : [];
@@ -60,7 +64,92 @@ function createMemoryDayPlansRepo() {
       return normalizePlan(store.get(keyOf(userId, dateYmd)));
     },
     async saveByDate(userId, dateYmd, plan) {
-      store.set(keyOf(userId, dateYmd), normalizePlan(plan));
+      const prev = normalizePlan(store.get(keyOf(userId, dateYmd)));
+      const next = normalizePlan(plan);
+      const execById = new Map();
+      for (const it of prev.items) {
+        if (it.executionStartedAt) execById.set(it.id, it.executionStartedAt);
+      }
+      const merged = {
+        ...next,
+        items: next.items.map((it) => ({
+          ...it,
+          executionStartedAt: execById.get(it.id) ?? it.executionStartedAt ?? null,
+        })),
+      };
+      store.set(keyOf(userId, dateYmd), normalizePlan(merged));
+    },
+
+    async startExecution(userId, dateYmd, itemId) {
+      const k = keyOf(userId, dateYmd);
+      const plan = normalizePlan(store.get(k));
+      const nowIso = new Date().toISOString();
+      const others = plan.items.map((it) => {
+        if (it.id === itemId) return it;
+        if (!it.executionStartedAt) return it;
+        const started = Date.parse(it.executionStartedAt);
+        const add = Number.isFinite(started) ? Math.max(0, Math.floor((Date.now() - started) / 1000)) : 0;
+        return {
+          ...it,
+          executedSeconds: (it.executedSeconds ?? 0) + add,
+          executionStartedAt: null,
+          done: false,
+        };
+      });
+      let found = false;
+      const items = others.map((it) => {
+        if (it.id !== itemId) return it;
+        found = true;
+        return { ...it, executionStartedAt: nowIso, done: true };
+      });
+      if (!found) {
+        const err = new Error("Item not found");
+        err.status = 404;
+        throw err;
+      }
+      store.set(k, normalizePlan({ ...plan, items }));
+      const target = items.find((it) => it.id === itemId);
+      return {
+        id: target.id,
+        executedSeconds: target.executedSeconds ?? 0,
+        executionStartedAt: target.executionStartedAt,
+        done: target.done,
+      };
+    },
+
+    async stopExecution(userId, dateYmd, itemId) {
+      const k = keyOf(userId, dateYmd);
+      const plan = normalizePlan(store.get(k));
+      const orig = plan.items.find((it) => it.id === itemId);
+      if (!orig) {
+        const err = new Error("Item not found");
+        err.status = 404;
+        throw err;
+      }
+      if (!orig.executionStartedAt) {
+        const err = new Error("Not running");
+        err.status = 409;
+        throw err;
+      }
+      const started = Date.parse(orig.executionStartedAt);
+      const add = Number.isFinite(started) ? Math.max(0, Math.floor((Date.now() - started) / 1000)) : 0;
+      const items = plan.items.map((it) => {
+        if (it.id !== itemId) return it;
+        return {
+          ...it,
+          executedSeconds: (it.executedSeconds ?? 0) + add,
+          executionStartedAt: null,
+          done: false,
+        };
+      });
+      const target = items.find((it) => it.id === itemId);
+      store.set(k, normalizePlan({ ...plan, items }));
+      return {
+        id: target.id,
+        executedSeconds: target.executedSeconds ?? 0,
+        executionStartedAt: null,
+        done: false,
+      };
     },
     async listMarkedDatesInMonth(userId, year, month) {
       const mm = String(month).padStart(2, "0");

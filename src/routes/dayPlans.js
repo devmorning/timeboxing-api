@@ -7,6 +7,7 @@ const router = express.Router();
 const repo = createDayPlansRepo();
 
 const YmdSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const ItemIdSchema = z.string().uuid();
 
 const DayPlanItemSchema = z.object({
   id: z.string().optional(),
@@ -90,9 +91,49 @@ router.get("/_meta", (_req, res) => {
       listMarkedDatesInMonth: "GET /api/day-plans/marked/month?year=YYYY&month=MM",
       listMarkedDatesInRange:
         "GET /api/day-plans/marked/range?startYmd=YYYY-MM-DD&endYmd=YYYY-MM-DD",
+      startExecution: "POST /api/day-plans/:dateYmd/items/:itemId/execution/start",
+      stopExecution: "POST /api/day-plans/:dateYmd/items/:itemId/execution/stop",
     },
     auth: "Session cookie required",
   });
+});
+
+router.post("/:dateYmd/items/:itemId/execution/start", async (req, res, next) => {
+  const startedAt = Date.now();
+  try {
+    const dateYmd = YmdSchema.parse(req.params.dateYmd);
+    const itemId = ItemIdSchema.parse(req.params.itemId);
+    const item = await repo.startExecution(req.user.id, dateYmd, itemId);
+    logRouteTiming("POST /api/day-plans/.../execution/start", startedAt, { status: 200, dateYmd, itemId });
+    res.json({ item });
+  } catch (error) {
+    if (error?.status === 404) {
+      logRouteTiming("POST /api/day-plans/.../execution/start", startedAt, { status: 404 });
+      return res.status(404).json({ error: error.message || "Not found" });
+    }
+    next(error);
+  }
+});
+
+router.post("/:dateYmd/items/:itemId/execution/stop", async (req, res, next) => {
+  const startedAt = Date.now();
+  try {
+    const dateYmd = YmdSchema.parse(req.params.dateYmd);
+    const itemId = ItemIdSchema.parse(req.params.itemId);
+    const item = await repo.stopExecution(req.user.id, dateYmd, itemId);
+    logRouteTiming("POST /api/day-plans/.../execution/stop", startedAt, { status: 200, dateYmd, itemId });
+    res.json({ item });
+  } catch (error) {
+    if (error?.status === 404) {
+      logRouteTiming("POST /api/day-plans/.../execution/stop", startedAt, { status: 404 });
+      return res.status(404).json({ error: error.message || "Not found" });
+    }
+    if (error?.status === 409) {
+      logRouteTiming("POST /api/day-plans/.../execution/stop", startedAt, { status: 409 });
+      return res.status(409).json({ error: error.message || "Conflict" });
+    }
+    next(error);
+  }
 });
 
 router.get("/:dateYmd", async (req, res, next) => {

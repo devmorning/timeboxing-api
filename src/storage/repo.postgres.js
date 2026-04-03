@@ -1,4 +1,18 @@
+const { randomUUID } = require("crypto");
 const { getPool } = require("./pool");
+
+function isUuidString(s) {
+  return (
+    typeof s === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)
+  );
+}
+
+function toIsoOrNull(v) {
+  if (v == null) return null;
+  if (v instanceof Date) return v.toISOString();
+  return null;
+}
 
 function createEmptyDayPlan() {
   return {
@@ -41,7 +55,8 @@ function createPostgresDayPlansRepo() {
                   'endTime', i.end_time,
                   'content', i.content,
                   'done', i.done,
-                  'executedSeconds', i.executed_seconds
+                  'executedSeconds', i.executed_seconds,
+                  'executionStartedAt', i.execution_started_at
                 )
                 ORDER BY i.start_time ASC, i.end_time ASC, i.created_at ASC
               ) FILTER (WHERE i.id IS NOT NULL),
@@ -79,6 +94,12 @@ function createPostgresDayPlansRepo() {
                 content: it.content,
                 done: Boolean(it.done),
                 executedSeconds: typeof it.executedSeconds === "number" ? it.executedSeconds : 0,
+                executionStartedAt:
+                  it.executionStartedAt != null
+                    ? typeof it.executionStartedAt === "string"
+                      ? it.executionStartedAt
+                      : toIsoOrNull(it.executionStartedAt)
+                    : null,
               }))
             : [],
         };
@@ -126,6 +147,20 @@ function createPostgresDayPlansRepo() {
         logRepoTiming("saveByDate.upsertPlan", upsertStartedAt, { userId, dateYmd });
 
         const dayPlanId = upsertPlan.rows[0].id;
+
+        const preserveStartedAt = Date.now();
+        const existingExecRes = await client.query(
+          `SELECT id, execution_started_at FROM day_plan_items WHERE day_plan_id = $1`,
+          [dayPlanId]
+        );
+        const execStartedByItemId = new Map();
+        for (const row of existingExecRes.rows) {
+          if (row.execution_started_at != null) {
+            execStartedByItemId.set(String(row.id), row.execution_started_at);
+          }
+        }
+        logRepoTiming("saveByDate.readExecutionPreserve", preserveStartedAt, { userId, dateYmd });
+
         const deleteStartedAt = Date.now();
         await client.query("DELETE FROM day_plan_items WHERE day_plan_id = $1", [dayPlanId]);
         logRepoTiming("saveByDate.deleteItems", deleteStartedAt, { userId, dateYmd });
@@ -135,12 +170,18 @@ function createPostgresDayPlansRepo() {
         for (const item of items) {
           if (!item || typeof item !== "object" || typeof item.content !== "string") continue;
           if (item.content.trim().length === 0) continue;
+          const rowId = isUuidString(item.id) ? item.id : randomUUID();
+          const preservedExec = execStartedByItemId.get(rowId) ?? null;
           await client.query(
             `
-            INSERT INTO day_plan_items(day_plan_id, start_time, end_time, content, done, executed_seconds, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, now(), now())
+            INSERT INTO day_plan_items(
+              id, day_plan_id, start_time, end_time, content, done, executed_seconds,
+              execution_started_at, created_at, updated_at
+            )
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, now(), now())
             `,
             [
+              rowId,
               dayPlanId,
               typeof item.startTime === "string"
                 ? item.startTime
@@ -153,6 +194,7 @@ function createPostgresDayPlansRepo() {
               typeof item.executedSeconds === "number"
                 ? Math.max(0, Math.floor(item.executedSeconds))
                 : 0,
+              preservedExec,
             ]
           );
           insertedCount += 1;
@@ -177,6 +219,126 @@ function createPostgresDayPlansRepo() {
       } finally {
         client.release();
       }
+    },
+
+    async startExecution(userId, dateYmd, itemId) {
+      if (!isUuidString(itemId)) {
+        const err = new Error("Invalid item id");
+        err.status = 400;
+        throw err;
+      }
+      const pool = getPool();
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        await client.query(
+          `
+          UPDATE day_plan_items i
+          SET
+            executed_seconds = i.executed_seconds + GREATEST(
+              0,
+              FLOOR(EXTRACT(EPOCH FROM (now() - i.execution_started_at)))::int
+            ),
+            execution_started_at = NULL,
+            done = false,
+            updated_at = now()
+          FROM day_plans dp
+          WHERE i.day_plan_id = dp.id
+            AND dp.user_id = $1::uuid
+            AND dp.plan_date = $2::date
+            AND i.execution_started_at IS NOT NULL
+            AND i.id <> $3::uuid
+          `,
+          [userId, dateYmd, itemId]
+        );
+
+        const upd = await client.query(
+          `
+          UPDATE day_plan_items i
+          SET
+            execution_started_at = now(),
+            done = true,
+            updated_at = now()
+          FROM day_plans dp
+          WHERE i.day_plan_id = dp.id
+            AND dp.user_id = $1::uuid
+            AND dp.plan_date = $2::date
+            AND i.id = $3::uuid
+          RETURNING i.id, i.executed_seconds, i.execution_started_at, i.done
+          `,
+          [userId, dateYmd, itemId]
+        );
+
+        if (upd.rows.length === 0) {
+          const err = new Error("Item not found");
+          err.status = 404;
+          throw err;
+        }
+
+        await client.query("COMMIT");
+
+        const r = upd.rows[0];
+        return {
+          id: String(r.id),
+          executedSeconds: typeof r.executed_seconds === "number" ? r.executed_seconds : 0,
+          executionStartedAt: r.execution_started_at ? new Date(r.execution_started_at).toISOString() : null,
+          done: Boolean(r.done),
+        };
+      } catch (e) {
+        try {
+          await client.query("ROLLBACK");
+        } catch (_rollbackErr) {
+          // ignore
+        }
+        throw e;
+      } finally {
+        client.release();
+      }
+    },
+
+    async stopExecution(userId, dateYmd, itemId) {
+      if (!isUuidString(itemId)) {
+        const err = new Error("Invalid item id");
+        err.status = 400;
+        throw err;
+      }
+      const pool = getPool();
+      const res = await pool.query(
+        `
+        UPDATE day_plan_items i
+        SET
+          executed_seconds = i.executed_seconds + GREATEST(
+            0,
+            FLOOR(EXTRACT(EPOCH FROM (now() - i.execution_started_at)))::int
+          ),
+          execution_started_at = NULL,
+          done = false,
+          updated_at = now()
+        FROM day_plans dp
+        WHERE i.day_plan_id = dp.id
+          AND dp.user_id = $1::uuid
+          AND dp.plan_date = $2::date
+          AND i.id = $3::uuid
+          AND i.execution_started_at IS NOT NULL
+        RETURNING i.id, i.executed_seconds, i.execution_started_at, i.done
+        `,
+        [userId, dateYmd, itemId]
+      );
+
+      if (res.rows.length === 0) {
+        const err = new Error("Not running or item not found");
+        err.status = 409;
+        throw err;
+      }
+
+      const r = res.rows[0];
+      return {
+        id: String(r.id),
+        executedSeconds: typeof r.executed_seconds === "number" ? r.executed_seconds : 0,
+        executionStartedAt: null,
+        done: Boolean(r.done),
+      };
     },
 
     async listMarkedDatesInMonth(userId, year, month) {
