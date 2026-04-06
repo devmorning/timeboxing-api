@@ -57,11 +57,33 @@ function keyOf(userId, dateYmd) {
   return `${userId}:${dateYmd}`;
 }
 
+function addDaysToYmd(ymd, delta) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + delta);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
 function createMemoryDayPlansRepo() {
   const store = new Map();
   return {
     async getByDate(userId, dateYmd) {
       return normalizePlan(store.get(keyOf(userId, dateYmd)));
+    },
+
+    async getPlansByDateRangeInclusive(userId, startYmd, endYmd) {
+      const out = {};
+      let cur = startYmd;
+      let guard = 0;
+      while (cur <= endYmd && guard < 400) {
+        out[cur] = await this.getByDate(userId, cur);
+        cur = addDaysToYmd(cur, 1);
+        guard += 1;
+      }
+      return out;
     },
     async saveByDate(userId, dateYmd, plan) {
       const prev = normalizePlan(store.get(keyOf(userId, dateYmd)));

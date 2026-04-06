@@ -83,6 +83,40 @@ router.get("/marked/range", async (req, res, next) => {
   }
 });
 
+/** 기간 내 일별 day-plan 전체 (없는 날은 빈 플랜). 단일 DB 쿼리(Postgres). */
+router.get("/range", async (req, res, next) => {
+  const startedAt = Date.now();
+  try {
+    const startYmd = YmdSchema.parse(req.query.startYmd);
+    const endYmd = YmdSchema.parse(req.query.endYmd);
+    if (startYmd > endYmd) return res.status(400).json({ error: "Invalid range" });
+
+    let dayCount = 0;
+    let cur = startYmd;
+    while (cur <= endYmd) {
+      dayCount += 1;
+      if (dayCount > 400) {
+        return res.status(400).json({ error: "Range too large (max 400 days)" });
+      }
+      const [y, m, d] = cur.split("-").map(Number);
+      const dt = new Date(y, m - 1, d);
+      dt.setDate(dt.getDate() + 1);
+      cur = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+    }
+
+    const plans = await repo.getPlansByDateRangeInclusive(req.user.id, startYmd, endYmd);
+    logRouteTiming("GET /api/day-plans/range", startedAt, {
+      status: 200,
+      startYmd,
+      endYmd,
+      dayCount,
+    });
+    res.json({ plans });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/_meta", (_req, res) => {
   res.json({
     endpoints: {
@@ -91,6 +125,8 @@ router.get("/_meta", (_req, res) => {
       listMarkedDatesInMonth: "GET /api/day-plans/marked/month?year=YYYY&month=MM",
       listMarkedDatesInRange:
         "GET /api/day-plans/marked/range?startYmd=YYYY-MM-DD&endYmd=YYYY-MM-DD",
+      getPlansByDateRangeInclusive:
+        "GET /api/day-plans/range?startYmd=YYYY-MM-DD&endYmd=YYYY-MM-DD",
       startExecution: "POST /api/day-plans/:dateYmd/items/:itemId/execution/start",
       stopExecution: "POST /api/day-plans/:dateYmd/items/:itemId/execution/stop",
     },

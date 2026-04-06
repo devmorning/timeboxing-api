@@ -22,6 +22,40 @@ function createEmptyDayPlan() {
   };
 }
 
+function addDaysToYmd(ymd, delta) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + delta);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+function mapRowToPlan(row) {
+  if (!row) return createEmptyDayPlan();
+  return {
+    important3: [row.important1 ?? "", row.important2 ?? "", row.important3 ?? ""],
+    brainDump: row.brain_dump ?? "",
+    items: Array.isArray(row.items)
+      ? row.items.map((it) => ({
+          id: it.id,
+          startTime: it.startTime,
+          endTime: it.endTime ?? "",
+          content: it.content,
+          done: Boolean(it.done),
+          executedSeconds: typeof it.executedSeconds === "number" ? it.executedSeconds : 0,
+          executionStartedAt:
+            it.executionStartedAt != null
+              ? typeof it.executionStartedAt === "string"
+                ? it.executionStartedAt
+                : toIsoOrNull(it.executionStartedAt)
+              : null,
+        }))
+      : [],
+  };
+}
+
 function logRepoTiming(name, startedAt, meta = {}) {
   // eslint-disable-next-line no-console
   console.log("[repo:postgres]", {
@@ -73,46 +107,87 @@ function createPostgresDayPlansRepo() {
         logRepoTiming("getByDate.singleQuery", queryStartedAt, { userId, dateYmd });
 
         const row = planRes.rows[0];
-        if (!row) {
-          logRepoTiming("getByDate.total", totalStartedAt, {
-            userId,
-            dateYmd,
-            itemCount: 0,
-            empty: true,
-          });
-          return createEmptyDayPlan();
-        }
-
-        const result = {
-          important3: [row.important1 ?? "", row.important2 ?? "", row.important3 ?? ""],
-          brainDump: row.brain_dump ?? "",
-          items: Array.isArray(row.items)
-            ? row.items.map((it) => ({
-                id: it.id,
-                startTime: it.startTime,
-                endTime: it.endTime ?? "",
-                content: it.content,
-                done: Boolean(it.done),
-                executedSeconds: typeof it.executedSeconds === "number" ? it.executedSeconds : 0,
-                executionStartedAt:
-                  it.executionStartedAt != null
-                    ? typeof it.executionStartedAt === "string"
-                      ? it.executionStartedAt
-                      : toIsoOrNull(it.executionStartedAt)
-                    : null,
-              }))
-            : [],
-        };
+        const result = mapRowToPlan(row);
         logRepoTiming("getByDate.total", totalStartedAt, {
           userId,
           dateYmd,
           itemCount: result.items.length,
-          empty: false,
+          empty: !row,
         });
         return result;
       } finally {
         client.release();
       }
+    },
+
+    /**
+     * [startYmd, endYmd] 달력일 포함 범위의 플랜을 한 번의 쿼리로 조회. 없는 날짜는 빈 플랜.
+     * @returns {Record<string, ReturnType<createEmptyDayPlan>>}
+     */
+    async getPlansByDateRangeInclusive(userId, startYmd, endYmd) {
+      const pool = getPool();
+      const totalStartedAt = Date.now();
+      const planRes = await pool.query(
+        `
+        SELECT
+          dp.plan_date,
+          dp.id,
+          dp.important1,
+          dp.important2,
+          dp.important3,
+          dp.brain_dump,
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'id', i.id,
+                'startTime', i.start_time,
+                'endTime', i.end_time,
+                'content', i.content,
+                'done', i.done,
+                'executedSeconds', i.executed_seconds,
+                'executionStartedAt', i.execution_started_at
+              )
+              ORDER BY i.start_time ASC, i.end_time ASC, i.created_at ASC
+            ) FILTER (WHERE i.id IS NOT NULL),
+            '[]'::json
+          ) AS items
+        FROM day_plans dp
+        LEFT JOIN day_plan_items i
+          ON i.day_plan_id = dp.id
+        WHERE dp.user_id = $1 AND dp.plan_date >= $2::date AND dp.plan_date <= $3::date
+        GROUP BY dp.id, dp.plan_date, dp.important1, dp.important2, dp.important3, dp.brain_dump
+        ORDER BY dp.plan_date ASC
+        `,
+        [userId, startYmd, endYmd]
+      );
+      logRepoTiming("getPlansByDateRangeInclusive.query", totalStartedAt, {
+        userId,
+        startYmd,
+        endYmd,
+        rowCount: planRes.rows.length,
+      });
+
+      const byYmd = new Map();
+      for (const row of planRes.rows) {
+        const ymd = row.plan_date.toISOString().slice(0, 10);
+        byYmd.set(ymd, mapRowToPlan(row));
+      }
+
+      const out = {};
+      let cur = startYmd;
+      let guard = 0;
+      while (cur <= endYmd && guard < 400) {
+        out[cur] = byYmd.get(cur) ?? createEmptyDayPlan();
+        cur = addDaysToYmd(cur, 1);
+        guard += 1;
+      }
+      logRepoTiming("getPlansByDateRangeInclusive.total", totalStartedAt, {
+        userId,
+        startYmd,
+        endYmd,
+        dayCount: guard,
+      });
+      return out;
     },
 
     async saveByDate(userId, dateYmd, plan) {
