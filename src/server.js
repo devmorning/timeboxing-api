@@ -8,6 +8,7 @@ const { configurePassport } = require("./auth/passport");
 const authRouter = require("./routes/auth");
 const dayPlansRouter = require("./routes/dayPlans");
 const repeatingTemplatesRouter = require("./routes/repeatingTemplates");
+const aiRouter = require("./routes/ai");
 
 configurePassport();
 
@@ -458,6 +459,7 @@ function createServer() {
   app.use("/auth", authRouter);
   app.use("/api/day-plans", dayPlansRouter);
   app.use("/api/repeating-templates", repeatingTemplatesRouter);
+  app.use("/api/ai", aiRouter);
 
   app.use((error, _req, res, _next) => {
     // eslint-disable-next-line no-console
